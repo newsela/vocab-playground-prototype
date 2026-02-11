@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { motion, AnimatePresence, Reorder } from 'framer-motion';
+import { useState, useMemo, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useGameState } from '../state/useGameState';
 import { wordSets } from '../data/wordSets';
 import { intensityScore } from '../utils/scoring';
@@ -9,28 +9,61 @@ export default function IntensityMeter() {
   const { currentWordSetIndex, addScore, showFeedback, markGamePlayed, recordGameScore, advanceWordSet, rotateArticle } = useGameState();
   const data = wordSets[currentWordSetIndex].intensity;
 
-  const [placedWords, setPlacedWords] = useState<string[]>([]);
+  // slots[0] = top (strongest), slots[3] = bottom (weakest)
+  const [slots, setSlots] = useState<(string | null)[]>([null, null, null, null]);
   const [answered, setAnswered] = useState(false);
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
+  const dragRef = useRef<{ word: string; fromSlot?: number } | null>(null);
 
   const shuffledBank = useMemo(() => shuffle(data.words), [data.words]);
+  const placedWords = slots.filter((s): s is string => s !== null);
   const bankWords = shuffledBank.filter(w => !placedWords.includes(w));
   const allPlaced = placedWords.length === 4;
 
-  const placeWord = (word: string) => {
-    if (answered || allPlaced) return;
-    setPlacedWords(prev => [...prev, word]);
+  const placeWordInSlot = (word: string, targetSlot: number, fromSlot?: number) => {
+    setSlots(prev => {
+      const next = [...prev];
+      const displaced = next[targetSlot];
+
+      // Clear the source slot if dragging from another slot
+      if (fromSlot !== undefined) {
+        next[fromSlot] = displaced; // swap
+      }
+
+      next[targetSlot] = word;
+      return next;
+    });
   };
 
-  const removeWord = (word: string) => {
+  const placeWordNextEmpty = (word: string) => {
     if (answered) return;
-    setPlacedWords(prev => prev.filter(w => w !== word));
+    setSlots(prev => {
+      const emptyIndex = prev.indexOf(null);
+      if (emptyIndex === -1) return prev;
+      const next = [...prev];
+      next[emptyIndex] = word;
+      return next;
+    });
   };
+
+  const removeWord = (slotIndex: number) => {
+    if (answered) return;
+    setSlots(prev => {
+      const next = [...prev];
+      next[slotIndex] = null;
+      return next;
+    });
+  };
+
+  // Convert display order (high→low) to data order (low→high) for scoring
+  const toDataOrder = (displaySlots: (string | null)[]) =>
+    [...displaySlots].reverse().filter((s): s is string => s !== null);
 
   const handleSubmit = () => {
     if (!allPlaced || answered) return;
     setAnswered(true);
 
-    const points = intensityScore(placedWords, data.words);
+    const points = intensityScore(toDataOrder(slots), data.words);
     const perfect = points === 400;
     addScore(points, perfect);
     markGamePlayed('gameC');
@@ -46,24 +79,62 @@ export default function IntensityMeter() {
   };
 
   const restart = () => {
-    setPlacedWords([]);
+    setSlots([null, null, null, null]);
     setAnswered(false);
+    setDragOverSlot(null);
   };
 
-  // Slot gradient colors (index 0 = bottom/cool, index 3 = top/hot)
+  // Drag handlers
+  const handleDragStart = (e: React.DragEvent, word: string, fromSlot?: number) => {
+    dragRef.current = { word, fromSlot };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', word);
+  };
+
+  const handleDragOver = (e: React.DragEvent, slotIndex: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverSlot(slotIndex);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverSlot(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetSlot: number) => {
+    e.preventDefault();
+    setDragOverSlot(null);
+    if (!dragRef.current || answered) return;
+    placeWordInSlot(dragRef.current.word, targetSlot, dragRef.current.fromSlot);
+    dragRef.current = null;
+  };
+
+  const handleDragEnd = () => {
+    dragRef.current = null;
+    setDragOverSlot(null);
+  };
+
+  // Slot gradient colors in display order (index 0 = top/hot, index 3 = bottom/cool)
   const slotColors = [
-    'from-blue-100 to-blue-50 border-blue-200',
-    'from-cyan-50 to-yellow-50 border-yellow-200',
-    'from-yellow-50 to-orange-50 border-orange-200',
     'from-orange-100 to-red-100 border-red-200',
+    'from-yellow-50 to-orange-50 border-orange-200',
+    'from-cyan-50 to-yellow-50 border-yellow-200',
+    'from-blue-100 to-blue-50 border-blue-200',
   ];
 
-  // Check correctness per slot when answered
+  const slotHighlight = [
+    'ring-red-300',
+    'ring-orange-300',
+    'ring-yellow-300',
+    'ring-blue-300',
+  ];
+
+  // Check correctness per display slot when answered
   const slotCorrectness = answered
-    ? placedWords.map((word, i) => word === data.words[i])
+    ? slots.map((word, i) => word === data.words[3 - i])
     : [];
 
-  const score = answered ? intensityScore(placedWords, data.words) : 0;
+  const score = answered ? intensityScore(toDataOrder(slots), data.words) : 0;
 
   if (answered) {
     return (
@@ -72,7 +143,6 @@ export default function IntensityMeter() {
           Results for <strong>{data.concept}</strong>
         </p>
 
-        {/* Thermometer with results (top to bottom = high to low) */}
         <div className="flex items-stretch gap-3">
           <div className="flex flex-col justify-between py-2 text-right w-20 shrink-0">
             <div className="flex items-center gap-1 justify-end">
@@ -86,13 +156,13 @@ export default function IntensityMeter() {
           </div>
 
           <div className="flex-1 flex flex-col gap-2">
-            {[3, 2, 1, 0].map(i => (
+            {[0, 1, 2, 3].map(i => (
               <div
                 key={i}
                 className={`h-14 rounded-lg border-2 bg-gradient-to-r ${slotColors[i]} flex items-center justify-center relative`}
               >
                 <span className="text-sm font-semibold text-gray-800">
-                  {placedWords[i]}
+                  {slots[i]}
                 </span>
                 <span className="absolute right-3 text-sm">
                   {slotCorrectness[i] ? (
@@ -148,13 +218,11 @@ export default function IntensityMeter() {
   return (
     <div className="p-5 flex flex-col gap-4">
       <p className="text-sm text-gray-500">
-        Rank these words by <strong>{data.concept.toLowerCase()}</strong> — weakest at the bottom, strongest at the top.
-        {!allPlaced ? ' Click a word to place it.' : ' Drag to reorder, then submit.'}
+        Rank these words by <strong>{data.concept.toLowerCase()}</strong> — drag words onto the thermometer, strongest at top.
       </p>
 
       {/* Thermometer */}
       <div className="flex items-stretch gap-3">
-        {/* Left labels */}
         <div className="flex flex-col justify-between py-2 text-right w-20 shrink-0">
           <div className="flex items-center gap-1 justify-end">
             <span className="text-xs font-semibold text-red-500">High</span>
@@ -166,72 +234,51 @@ export default function IntensityMeter() {
           </div>
         </div>
 
-        {/* Slots */}
+        {/* Drop-target slots */}
         <div className="flex-1 flex flex-col gap-2">
-          {allPlaced ? (
-            /* Drag-to-reorder mode: display top (index 3) to bottom (index 0) */
-            <Reorder.Group
-              axis="y"
-              values={[...placedWords].reverse()}
-              onReorder={(newReversed) => setPlacedWords([...newReversed].reverse())}
-              className="flex flex-col gap-2"
-            >
-              {[...placedWords].reverse().map((word, visualIdx) => {
-                const slotIdx = 3 - visualIdx; // visual top = slot 3
-                return (
-                  <Reorder.Item
-                    key={word}
-                    value={word}
-                    className={`h-14 rounded-lg border-2 bg-gradient-to-r ${slotColors[slotIdx]} flex items-center justify-center cursor-grab active:cursor-grabbing relative select-none`}
-                    whileDrag={{ scale: 1.05, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}
-                  >
-                    <span className="text-sm font-semibold text-gray-800">{word}</span>
-                    <span className="absolute right-3 text-gray-400 text-xs">⋮⋮</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeWord(word); }}
-                      className="absolute left-3 text-gray-400 hover:text-red-500 text-xs cursor-pointer"
-                      aria-label={`Remove ${word}`}
+          {[0, 1, 2, 3].map(i => {
+            const word = slots[i];
+            const isOver = dragOverSlot === i;
+            return (
+              <div
+                key={i}
+                onDragOver={(e) => handleDragOver(e, i)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, i)}
+                className={`h-14 rounded-lg border-2 bg-gradient-to-r ${slotColors[i]} flex items-center justify-center relative transition-all ${
+                  isOver ? `ring-2 ${slotHighlight[i]} scale-[1.02]` : ''
+                }`}
+              >
+                <AnimatePresence mode="wait">
+                  {word ? (
+                    <motion.span
+                      key={word}
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.8, opacity: 0 }}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e as unknown as React.DragEvent, word, i)}
+                      onDragEnd={handleDragEnd}
+                      className="text-sm font-semibold text-gray-800 flex items-center gap-2 cursor-grab active:cursor-grabbing select-none"
                     >
-                      ✕
-                    </button>
-                  </Reorder.Item>
-                );
-              })}
-            </Reorder.Group>
-          ) : (
-            /* Click-to-place mode: show slots top to bottom (3, 2, 1, 0) */
-            [3, 2, 1, 0].map(i => {
-              const word = placedWords[i];
-              return (
-                <div
-                  key={i}
-                  className={`h-14 rounded-lg border-2 bg-gradient-to-r ${slotColors[i]} flex items-center justify-center relative transition-all`}
-                >
-                  <AnimatePresence mode="wait">
-                    {word ? (
-                      <motion.span
-                        key={word}
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0.8, opacity: 0 }}
-                        className="text-sm font-semibold text-gray-800 flex items-center gap-1"
+                      <span className="text-gray-300 text-xs">⋮⋮</span>
+                      {word}
+                      <button
+                        onClick={() => removeWord(i)}
+                        className="text-gray-400 hover:text-red-500 text-xs cursor-pointer"
                       >
-                        {word}
-                        <button
-                          onClick={() => removeWord(word)}
-                          className="text-gray-400 hover:text-red-500 text-xs cursor-pointer ml-1"
-                        >
-                          ✕
-                        </button>
-                      </motion.span>
-                    ) : (
-                      <span className="text-xs text-gray-300">{i + 1}</span>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })
-          )}
+                        ✕
+                      </button>
+                    </motion.span>
+                  ) : (
+                    <span className={`text-xs ${isOver ? 'text-gray-500 font-medium' : 'text-gray-300'}`}>
+                      {isOver ? 'Drop here' : `${4 - i}`}
+                    </span>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -243,24 +290,21 @@ export default function IntensityMeter() {
           </label>
           <div className="flex flex-wrap gap-2">
             {bankWords.map(word => (
-              <motion.button
+              <motion.div
                 key={word}
-                onClick={() => placeWord(word)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-newsela-blue hover:bg-blue-50 transition-all cursor-pointer"
+                draggable
+                onDragStart={(e) => handleDragStart(e as unknown as React.DragEvent, word)}
+                onDragEnd={handleDragEnd}
+                onClick={() => placeWordNextEmpty(word)}
+                className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-newsela-blue hover:bg-blue-50 transition-all cursor-grab active:cursor-grabbing select-none"
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
               >
                 {word}
-              </motion.button>
+              </motion.div>
             ))}
           </div>
         </div>
-      )}
-
-      {allPlaced && (
-        <p className="text-xs text-gray-400 text-center">
-          Drag words to reorder, or click ✕ to remove. Hit submit when ready.
-        </p>
       )}
 
       {/* Submit */}

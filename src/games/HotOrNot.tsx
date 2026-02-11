@@ -4,7 +4,7 @@ import { useGameState } from '../state/useGameState';
 import { wordSets } from '../data/wordSets';
 import { hotOrNotScore } from '../utils/scoring';
 
-const ROUND_MS = 5000;
+const ROUND_MS = 10000;
 const TICK_MS = 50;
 
 export default function HotOrNot() {
