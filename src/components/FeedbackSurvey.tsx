@@ -36,13 +36,40 @@ export default function FeedbackSurvey() {
   const [favorite, setFavorite] = useState<string | null>(null);
   const [comments, setComments] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const payload = { ratings, favorite, comments, timestamp: new Date().toISOString() };
+
+    // Always log to console as backup
     console.log('=== FEEDBACK SUBMITTED ===');
     console.log(JSON.stringify(payload, null, 2));
     console.log('========================');
-    setSubmitted(true);
+
+    const sheetUrl = import.meta.env.VITE_GOOGLE_SHEET_URL;
+    if (!sheetUrl) {
+      console.warn('No VITE_GOOGLE_SHEET_URL set — feedback logged to console only');
+      setSubmitted(true);
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      await fetch(sheetUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify(payload),
+      });
+      setSubmitted(true);
+    } catch (err) {
+      console.error('Failed to send feedback to Google Sheet:', err);
+      setError('Could not save feedback. Your responses were logged locally.');
+      setSubmitted(true);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (submitted) {
@@ -58,7 +85,7 @@ export default function FeedbackSurvey() {
         </motion.div>
         <p className="text-lg font-semibold text-gray-800">Thanks for your feedback!</p>
         <p className="text-sm text-gray-500 text-center">
-          Your ratings and comments have been logged to the console.
+          {error ? error : 'Your feedback has been recorded.'}
         </p>
         <button
           onClick={() => setView('dashboard')}
@@ -132,9 +159,10 @@ export default function FeedbackSurvey() {
       {/* Submit */}
       <button
         onClick={handleSubmit}
-        className="w-full py-3 rounded-xl bg-newsela-blue text-white font-semibold hover:bg-newsela-blue-dark transition-colors cursor-pointer"
+        disabled={submitting}
+        className="w-full py-3 rounded-xl bg-newsela-blue text-white font-semibold hover:bg-newsela-blue-dark transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        Submit Feedback
+        {submitting ? 'Submitting...' : 'Submit Feedback'}
       </button>
     </div>
   );

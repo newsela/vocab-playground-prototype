@@ -90,7 +90,7 @@ export default function GameDashboard() {
       {!allPlayed && (
         <button
           onClick={() => setView('feedback')}
-          className="text-xs text-gray-400 hover:text-newsela-blue transition-colors self-center cursor-pointer"
+          className="w-full py-3 bg-newsela-blue text-white rounded-xl text-sm font-semibold hover:bg-newsela-blue-dark transition-colors cursor-pointer"
         >
           Share Feedback
         </button>
